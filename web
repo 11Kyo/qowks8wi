@@ -1,0 +1,250 @@
+from flask import Flask, render_template_string, jsonify, request
+from threading import Thread
+import random
+import string
+import time
+
+app = Flask(__name__)
+
+# Dictionary to store generated keys by IP address
+key_data = {}
+
+def generate_key(prefix="Kyzaro_", length=15):
+    """Generate a key starting with a prefix followed by random characters."""
+    random_part = ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+    return f"{prefix}{random_part}"
+
+@app.route('/generate_key', methods=['POST'])
+def generate_new_key():
+    user_ip = request.remote_addr  # Get the IP address of the requester
+
+    # Check if this IP has already generated a key in the last 24 hours
+    if user_ip in key_data:
+        key_info = key_data[user_ip]
+        if time.time() < key_info["expiration"]:
+            # Return the remaining time if a key has already been generated within 24 hours
+            return jsonify({
+                "error": "Key already generated",
+                "time_left": int(key_info["expiration"] - time.time())
+            }), 403
+
+    # Generate a new key and store it with a 24-hour expiration
+    new_key = generate_key()
+    expiration_time = time.time() + 24 * 60 * 60  # 24 hours from now
+    key_data[user_ip] = {
+        "key": new_key,
+        "expiration": expiration_time
+    }
+
+    return jsonify({"key": new_key, "expires_in": 86400})  # Expiration in seconds
+
+@app.route('/get_key', methods=['GET'])
+def get_key():
+    user_ip = request.remote_addr  # Get the IP address of the requester
+
+    # Check if a key exists for this IP and is still valid
+    if user_ip in key_data and time.time() < key_data[user_ip]["expiration"]:
+        remaining_time = int(key_data[user_ip]["expiration"] - time.time())
+        return jsonify({"key": key_data[user_ip]["key"], "time_left": remaining_time})
+
+    return jsonify({"key": None})
+
+# HTML template with "Copied to Clipboard" tooltip and "Made with ❤️ by Kyo"
+html_template = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kyzaro Key Generator</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background-color: #101010; color: #FFFFFF; font-family: 'Roboto', sans-serif; overflow: hidden; }
+        #particles-js { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; }
+        .container { text-align: center; z-index: 1; background: rgba(20, 20, 20, 0.8); padding: 30px 60px; border-radius: 15px; backdrop-filter: blur(15px); box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6); }
+        h1 { font-size: 36px; margin-bottom: 20px; color: #00f0ff; text-shadow: 0 0 10px #00f0ff; }
+        .button { background: linear-gradient(135deg, #00f0ff, #00e0a0); padding: 12px 28px; font-size: 18px; color: #ffffff; cursor: pointer; border: none; border-radius: 10px; box-shadow: 0 4px 15px rgba(0, 240, 255, 0.5); transition: all 0.3s ease; position: relative; overflow: hidden; animation: pulse 2s infinite; }
+        .button.disabled {
+            background: #444444;
+            cursor: not-allowed;
+            box-shadow: none;
+            animation: none;
+            color: #888888;
+            border: 2px solid rgba(0, 240, 255, 0.5);
+            animation: pulseBorder 1.5s infinite;
+        }
+        @keyframes pulseBorder {
+            0%, 100% { border-color: rgba(0, 240, 255, 0.5); }
+            50% { border-color: rgba(0, 240, 255, 1); }
+        }
+        #key-display { margin-top: 20px; font-size: 22px; font-weight: bold; padding: 12px; background: rgba(255, 255, 255, 0.05); color: #00f0ff; border-radius: 10px; box-shadow: 0 0 10px #00f0ff; text-shadow: 0 0 8px #00f0ff; cursor: pointer; position: relative; }
+        #key-display:hover { background: rgba(255, 255, 255, 0.1); color: #00e0a0; box-shadow: 0 0 15px #00e0a0; }
+
+        /* Tooltip styling */
+        .tooltip {
+            position: absolute;
+            bottom: -40px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #333;
+            color: #fff;
+            padding: 6px 12px;
+            font-size: 14px;
+            border-radius: 5px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+            white-space: nowrap;
+        }
+        .tooltip.show {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        /* Timer styling */
+        #countdown {
+            margin-top: 15px;
+            font-size: 18px;
+            color: #00e0a0;
+            font-weight: bold;
+        }
+
+        /* Made by Kyo footer */
+        .footer {
+            position: absolute;
+            bottom: 10px;
+            text-align: center;
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.5);
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div id="particles-js"></div>
+    <div class="container">
+        <h1>Kyzaro Key Generator</h1>
+        <button class="button" id="generate-button" onclick="generateKey()">Generate Key</button>
+        <div id="countdown"></div>
+        <div id="key-display" onclick="copyKey()">Click 'Generate Key' to create a new key
+            <span class="tooltip" id="tooltip">Copied to clipboard!</span>
+        </div>
+    </div>
+    <div class="footer">Made with ❤️ by Kyo</div>
+
+    <script src="https://cdn.jsdelivr.net/particles.js/2.0.0/particles.min.js"></script>
+    <script>
+        particlesJS("particles-js", {
+            "particles": {
+                "number": { "value": 160, "density": { "enable": true, "value_area": 1000 } },
+                "color": { "value": "#00f0ff" },
+                "shape": { "type": "circle", "stroke": { "width": 0, "color": "#000000" } },
+                "opacity": { "value": 0.4, "random": true },
+                "size": { "value": 3, "random": true },
+                "line_linked": { "enable": true, "distance": 130, "color": "#00f0ff", "opacity": 0.4, "width": 1 },
+                "move": { "enable": true, "speed": 1.7, "direction": "none", "random": false, "straight": false, "out_mode": "out" }
+            },
+            "interactivity": {
+                "events": {
+                    "onhover": { "enable": true, "mode": "repulse" },
+                    "onclick": { "enable": true, "mode": "push" }
+                },
+                "modes": { "repulse": { "distance": 100, "duration": 0.4 }, "push": { "particles_nb": 4 } }
+            },
+            "retina_detect": true
+        });
+
+        let countdownInterval;
+
+        function displayKeyWithTypingEffect(key) {
+            const keyDisplay = document.getElementById('key-display');
+            keyDisplay.innerText = ''; // Clear previous text
+            let index = 0;
+            function type() {
+                if (index < key.length) {
+                    keyDisplay.innerText += key[index];
+                    index++;
+                    setTimeout(type, 30); // Typing speed
+                }
+            }
+            type();
+        }
+
+        function generateKey() {
+            const button = document.getElementById('generate-button');
+            button.disabled = true;
+            fetch('/generate_key', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        startCountdown(data.time_left);
+                    } else {
+                        displayKeyWithTypingEffect(data.key);
+                        button.classList.add("disabled");
+                        startCountdown(86400); // 24-hour countdown
+                    }
+                })
+                .catch(error => {
+                    console.error('Error generating key:', error);
+                    button.disabled = false;
+                });
+        }
+
+        function startCountdown(seconds) {
+            const button = document.getElementById('generate-button');
+            const countdownDisplay = document.getElementById('countdown');
+            clearInterval(countdownInterval);
+            button.disabled = true;
+            button.classList.add("disabled");
+            countdownInterval = setInterval(() => {
+                if (seconds <= 0) {
+                    clearInterval(countdownInterval);
+                    countdownDisplay.innerText = '';
+                    button.innerText = "Generate Key";
+                    button.disabled = false;
+                    button.classList.remove("disabled");
+                } else {
+                    const hours = String(Math.floor(seconds / 3600)).padStart(2, '0');
+                    const minutes = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
+                    const secs = String(seconds % 60).padStart(2, '0');
+                    countdownDisplay.innerText = `Time Remaining: ${hours}:${minutes}:${secs}`;
+                    seconds--;
+                }
+            }, 1000);
+        }
+
+        function copyKey() {
+            const keyText = document.getElementById('key-display').innerText;
+            navigator.clipboard.writeText(keyText).then(() => {
+                const tooltip = document.getElementById('tooltip');
+                tooltip.classList.add("show");
+                setTimeout(() => tooltip.classList.remove("show"), 2000);
+            });
+        }
+
+        // Fetch existing key on page load
+        window.onload = function() {
+            fetch('/get_key')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.key) {
+                        displayKeyWithTypingEffect(data.key);
+                        if (data.time_left) startCountdown(data.time_left);
+                    }
+                })
+                .catch(error => console.error('Error fetching key:', error));
+        };
+    </script>
+</body>
+</html>
+"""
+
+@app.route('/')
+def home():
+    return render_template_string(html_template)
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+Thread(target=run).start()
